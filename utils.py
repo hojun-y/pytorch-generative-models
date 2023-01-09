@@ -86,8 +86,6 @@ class Scheduler:
         self.params = params
         self.version_ctrl_mode = snapshot
 
-        self.test_z = torch.rand((16, params['z'], 1, 1), device='cuda')
-
     def init(self, initializers):
         for m, i in zip(self.models, initializers):
             m.apply(i)

@@ -9,7 +9,6 @@ from enum import Enum
 class SaveMode(Enum):
     NO_VERSIONING = 0
     STEPS = 1
-    TS = 2
 
 
 class Recorder:
@@ -17,9 +16,13 @@ class Recorder:
         self.steps = 0
         self.name = sess_name
         self.data_root = data_root
-        now = datetime.datetime.now()
+        self.sess_name = sess_name
+        self.flush_every = flush_every
+        self.writer = None
+
+    def init_tensorboard(self):
         self.writer = SummaryWriter(
-            f'{data_root}/tensorboard/{sess_name}-{self._get_ts()}', flush_secs=flush_every)
+            f'{self.data_root}/tensorboard/{self.sess_name}-{self._get_ts()}', flush_secs=self.flush_every)
 
     @staticmethod
     def _get_ts():
@@ -58,23 +61,24 @@ class Recorder:
     def close(self):
         self.writer.close()
 
-    def save_weights(self, weights, name, snapshot=False, ver=None):
-        model_id = self._get_ts() if ver is None else f'{ver:4}'
+    def save_weights(self, weights, name, snapshot=SaveMode.NO_VERSIONING):
         if snapshot == SaveMode.NO_VERSIONING:
             path = f'{self.data_root}/weights/{name}'
         elif snapshot == SaveMode.STEPS:
             path = f'{self.data_root}/weights/{name}-{self.steps:08}'
         else:
-            path = f'{self.data_root}/weights/{name}-{self._get_ts()}'
+            raise AttributeError('Unknown SaveMode')
+
         torch.save(weights, path)
 
     def load_weights(self, model, name, model_id=None):
-        path = f'{self.data_root}/weights/{name}' if model_id is None else f'{self.data_root}/weights/{name}-{model_id}'
+        path = f'{self.data_root}/weights/{name}' if model_id is None \
+            else f'{self.data_root}/weights/{name}-{model_id:08}'
         model.load_state_dict(torch.load(path))
 
 
 class Scheduler:
-    def __init__(self, root_path, name, feeder, models, params, optims, snapshot=0):
+    def __init__(self, root_path, name, feeder, models, params, optims, snapshot=SaveMode.NO_VERSIONING):
         self.data_feeder = feeder(params)
         self.recorder = Recorder(root_path, name)
         self.models = [model_base(params).cuda() for model_base in models]
@@ -88,7 +92,13 @@ class Scheduler:
         for m, i in zip(self.models, initializers):
             m.apply(i)
 
+    def load_weights(self, model_id=None):
+        for m in self.models:
+            self.recorder.load_weights(m, m.__class__.__name__, model_id)
+
     def train(self):
+        self.recorder.init_tensorboard()
+
         for m in self.models:
             m.train()
 

@@ -45,25 +45,18 @@ class EncoderConv(nn.Module):
     def __init__(self, params):
         super().__init__()
         self.params = params
-        self.main_net = nn.Sequential(
-            nn.Conv2d(1, self.params['n'], self.params['kernel_size'], padding='same', bias=False),
-            nn.ELU(inplace=True),  # n * 32 * 32
-            self.conv_block(1, 2),  # 2n * 16 * 16
-            self.conv_block(2, 4),  # 4n * 8 * 8
-            self.conv_block(4, 4),  # 4n * 4 * 4
-            nn.Conv2d(params['n'] * 4, params['n'], params['kernel_size'], padding='same', bias=False),
-            nn.ELU(inplace=False),
-        )
-        self.var = nn.Conv2d(params['n'], params['z'], params['kernel_size'], padding='same', bias=False)
-        self.mean = nn.Conv2d(params['n'], params['z'], params['kernel_size'], padding='same', bias=False)
 
-    def conv_block(self, in_mult, out_mult):
-        return nn.Sequential(
-            nn.Conv2d(self.params['n'] * in_mult, self.params['n'] * out_mult,
-                      self.params['kernel_size'], padding='same', bias=False),
+        self.main_net = nn.Sequential(
+            nn.Conv2d(1, params['n'], params['kernel_size'], 2),
             nn.ELU(inplace=True),
-            nn.MaxPool2d(2),
+            nn.Conv2d(params['n'], params['n'] * 2, self.params['kernel_size'], 2),
+            nn.ELU(inplace=True),
+            nn.Conv2d(params['n'] * 2, params['n'], self.params['kernel_size'], 2),
+            nn.ELU(inplace=True),
+            nn.Flatten()
         )
+        self.var = nn.Linear(params['n'] * 9, params['z'])
+        self.mean = nn.Linear(params['n'] * 9, params['z'])
 
     def forward(self, x):
         main_out = self.main_net(x)
@@ -76,24 +69,22 @@ class DecoderConv(nn.Module):
     def __init__(self, params):
         super().__init__()
         self.params = params
+        self.lin = nn.Sequential(
+            nn.Linear(params['z'], params['n']*9),
+            nn.ELU(inplace=True),
+        )
         self.net = nn.Sequential(
-            nn.Conv2d(params['z'], params['n'] * 4, params['kernel_size'], padding='same', bias=False),
-            nn.ELU(inplace=False),  # 4n * 4 * 4
-
-            self.conv_block(4, 4),  # 4n * 8 * 8
-            self.conv_block(4, 2),  # 2n * 16 * 16
-            self.conv_block(2, 1),  # n * 32 * 32
-            nn.Conv2d(params['n'], 1, params['kernel_size'], padding='same', bias=False),
+            nn.ConvTranspose2d(params['n'], params['n'], params['kernel_size'], 2),
+            nn.ELU(inplace=True),
+            nn.ConvTranspose2d(params['n'], params['n'] * 2, params['kernel_size'], 2),
+            nn.ELU(inplace=True),
+            nn.ConvTranspose2d(params['n'] * 2, params['n'], params['kernel_size'], 2, output_padding=1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(params['n'], 1, 1, padding=0),
             nn.Sigmoid(),
         )
 
-    def conv_block(self, in_mult, out_mult):
-        return nn.Sequential(
-            nn.Conv2d(self.params['n'] * in_mult, self.params['n'] * out_mult,
-                      self.params['kernel_size'], padding='same', bias=False),
-            nn.ELU(inplace=True),
-            nn.UpsamplingNearest2d(scale_factor=2),
-        )
-
     def forward(self, z):
-        return self.net(z)
+        lin = self.lin(z)
+        lin = torch.reshape(lin, [-1, self.params['n'], 3, 3])
+        return self.net(lin)

@@ -85,6 +85,10 @@ class Scheduler:
         self.optims = None
         self.params = params
         self.version_ctrl_mode = snapshot
+        self.post_init()
+
+    def post_init(self):
+        pass
 
     def init(self, initializers):
         for m, i in zip(self.models, initializers):

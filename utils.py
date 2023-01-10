@@ -78,11 +78,11 @@ class Recorder:
 
 
 class Scheduler:
-    def __init__(self, root_path, name, feeder, models, params, optims, snapshot=SaveMode.NO_VERSIONING):
+    def __init__(self, root_path, name, feeder, models, params, snapshot=SaveMode.NO_VERSIONING):
         self.data_feeder = feeder(params)
         self.recorder = Recorder(root_path, name)
         self.models = [model_base(params).cuda() for model_base in models]
-        self.optims = optims
+        self.optims = None
         self.params = params
         self.version_ctrl_mode = snapshot
 

@@ -1,9 +1,15 @@
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
+from torch.utils.data import IterableDataset
+import torch.multiprocessing as mp
 import torch
 import matplotlib.pyplot as plt
 import datetime
 from enum import Enum
+import os
+from PIL import Image
+import time
+import pickle
 
 
 class SaveMode(Enum):
@@ -147,3 +153,141 @@ class DataGenerator:
 
                 steps += 1
                 yield d
+
+
+class ImageChunk:
+    def __init__(self, size):
+        self.size = size
+        self.data = torch.empty(size)
+        self.labels = torch.empty(self.size[0], dtype=torch.long)
+
+    def add(self, data, label, cur):
+        self.data[cur] = data
+        self.labels[cur] = label
+
+    def __iter__(self):
+        for i in range(self.size[0]):
+            yield self.data[i], self.labels[i]
+
+    def __len__(self):
+        return self.size[0]
+
+
+class CachedImageDatasetWriter:
+    def __init__(self, root_path, n, chunk_size):
+        self.root_path = root_path
+        self.n = n
+        self.chunk_idx = 0
+        self.chunk_sizes = [chunk_size] * (self.n // chunk_size) + [self.n % chunk_size]
+        self.labels_lookup = {}
+        self.info = {"n": self.n, "sizes": self.chunk_sizes}
+        self.label_id = 0
+        self.global_cursor = 0
+
+    def save(self, xform, shape, name, out_path=""):
+        self.info['shape'] = shape
+        cursor = 0
+        chunk = ImageChunk((self.chunk_sizes[self.chunk_idx],) + shape)
+        try:
+            for path in os.listdir(self.root_path):
+                interm_path = os.path.join(self.root_path, path)
+                label = path
+                if os.path.isdir(interm_path):
+                    self.labels_lookup[self.label_id] = label
+                    for p, _, files in os.walk(interm_path):
+                        for file in files:
+                            full_path = os.path.join(p, file)
+                            img = Image.open(full_path)
+                            img = xform(img)
+                            chunk.add(img, self.label_id, cursor)
+                            self.global_cursor += 1
+                            cursor += 1
+                            if cursor == self.chunk_sizes[self.chunk_idx]:
+                                cursor = 0
+                                torch.save(
+                                    chunk.data,
+                                    os.path.join(out_path, f"{name}.{self.chunk_idx:03}.x.pt")
+                                )
+                                torch.save(
+                                    chunk.labels,
+                                    os.path.join(out_path, f"{name}.{self.chunk_idx:03}.y.pt")
+                                )
+                                self.chunk_idx += 1
+                                chunk = ImageChunk((self.chunk_sizes[self.chunk_idx],) + shape)
+                    self.label_id += 1
+        except IndexError:
+            pass
+
+        with open(os.path.join(out_path, f"{name}.info.dat"), 'wb') as f:
+            pickle.dump(self.info, f)
+
+        with open(os.path.join(out_path, f"{name}.lut.dat"), 'wb') as f:
+            pickle.dump(self.labels_lookup, f)
+
+
+class CachedImageDataset(IterableDataset):
+    def __init__(self, path, name):
+        super().__init__()
+        self.name = name
+        self.path = path
+        self.data = []
+        self.labels = []
+        self.chunk_sizes = {}
+        self.data_shape = ()
+        self.n_files = 0
+        self.n = 0
+        self.cur_id = 0
+        self.data_selector = 0
+
+        with open(os.path.join(path, f"{name}.info.dat"), 'rb') as f:
+            info = pickle.load(f)
+
+        self.chunk_sizes = info['sizes']
+        self.n = info['n']
+        self.n_files = len(self.chunk_sizes)
+        self.data_shape = (self.chunk_sizes[0],) + info['shape']
+        self.data = [
+            torch.zeros(self.data_shape).share_memory_(),
+            torch.zeros(self.data_shape).share_memory_()
+        ]
+        self.labels = [
+            torch.zeros([self.chunk_sizes[0]], dtype=torch.long).share_memory_(),
+            torch.zeros([self.chunk_sizes[0]], dtype=torch.long).share_memory_()
+        ]
+
+    def _next_file(self):
+        while True:
+            self.cur_id += 1
+            self.cur_id %= self.n_files
+            yield self.cur_id
+
+    def _flip_selector(self):
+        self.data_selector = 1 if not self.data_selector else 0
+
+    def _get_inverted_selector(self):
+        return 1 if not self.data_selector else 0
+
+    def _load(self, init=False):
+        chunk_id = 0 if init else self.cur_id
+        sel = 0 if init else self._get_inverted_selector()
+        filename = f"{self.name}.{chunk_id:03}"
+        filename = os.path.join(self.path, filename)
+        x = torch.load(filename + '.x.pt')
+        y = torch.load(filename + '.y.pt')
+        self.data[sel][0:self.chunk_sizes[chunk_id]] = x
+        self.labels[sel][0:self.chunk_sizes[chunk_id]] = y
+        time.sleep(3)
+
+    def __len__(self):
+        return self.n
+
+    def __iter__(self):
+        self._load(True)
+        for _ in self._next_file():
+            proc = mp.Process(target=self._load, args=(False,))
+            proc.start()
+            for i in range(self.chunk_sizes[self.cur_id]):
+                yield self.data[self.data_selector][i], self.labels[self.data_selector][i]
+
+            self._flip_selector()
+            proc.join()

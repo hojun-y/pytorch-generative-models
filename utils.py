@@ -10,6 +10,7 @@ import os
 from PIL import Image
 import time
 import pickle
+import random
 
 
 class SaveMode(Enum):
@@ -174,55 +175,77 @@ class ImageChunk:
 
 
 class CachedImageDatasetWriter:
-    def __init__(self, root_path, n, chunk_size):
+    def __init__(self, root_path, chunk_size):
         self.root_path = root_path
-        self.n = n
+        self.n = 0
+        self.n_chunks = 0
         self.chunk_idx = 0
-        self.chunk_sizes = [chunk_size] * (self.n // chunk_size) + [self.n % chunk_size]
+        self.chunk_size = chunk_size
+        self.chunk_sizes = []
         self.labels_lookup = {}
-        self.info = {"n": self.n, "sizes": self.chunk_sizes}
+        self.info = {}
         self.label_id = 0
         self.global_cursor = 0
 
-    def save(self, xform, shape, name, out_path=""):
-        self.info['shape'] = shape
+    def save(self, xform, shape, name, out_path="", shuffle=True):
+        files = []
+
+        for path in os.listdir(self.root_path):
+            interm_path = os.path.join(self.root_path, path)
+            label = path
+            if os.path.isdir(interm_path):
+                self.labels_lookup[self.label_id] = label
+                for p, _, f in os.walk(interm_path):
+                    for file in f:
+                        full_path = os.path.join(p, file)
+                        files.append((full_path, self.label_id))
+                self.label_id += 1
+        self.n = len(files)
+        self.chunk_sizes = [self.chunk_size] * (self.n // self.chunk_size)
+        if self.n % self.chunk_size:
+            self.chunk_sizes += [self.n % self.chunk_size]
+        self.n_chunks = len(self.chunk_sizes)
+        self.info = {"n": self.n, "sizes": self.chunk_sizes, "shape": shape}
+
+        print(f"[INFO] {self.n} files labeled with {self.label_id} classes found.")
+        print(f"[INFO] {self.n_chunks} chunks will be generated.")
+
         cursor = 0
         chunk = ImageChunk((self.chunk_sizes[self.chunk_idx],) + shape)
-        try:
-            for path in os.listdir(self.root_path):
-                interm_path = os.path.join(self.root_path, path)
-                label = path
-                if os.path.isdir(interm_path):
-                    self.labels_lookup[self.label_id] = label
-                    for p, _, files in os.walk(interm_path):
-                        for file in files:
-                            full_path = os.path.join(p, file)
-                            img = Image.open(full_path)
-                            img = xform(img)
-                            chunk.add(img, self.label_id, cursor)
-                            self.global_cursor += 1
-                            cursor += 1
-                            if cursor == self.chunk_sizes[self.chunk_idx]:
-                                cursor = 0
-                                torch.save(
-                                    chunk.data,
-                                    os.path.join(out_path, f"{name}.{self.chunk_idx:03}.x.pt")
-                                )
-                                torch.save(
-                                    chunk.labels,
-                                    os.path.join(out_path, f"{name}.{self.chunk_idx:03}.y.pt")
-                                )
-                                self.chunk_idx += 1
-                                chunk = ImageChunk((self.chunk_sizes[self.chunk_idx],) + shape)
-                    self.label_id += 1
-        except IndexError:
-            pass
+
+        if shuffle:
+            random.shuffle(files)
+
+        for i, (full_path, label) in enumerate(files):
+            img = Image.open(full_path)
+            img = xform(img)
+            chunk.add(img, label, cursor)
+            self.global_cursor += 1
+            cursor += 1
+            if cursor == self.chunk_sizes[self.chunk_idx]:
+                cursor = 0
+                torch.save(
+                    chunk.data,
+                    os.path.join(out_path, f"{name}.{self.chunk_idx:03}.x.pt")
+                )
+                torch.save(
+                    chunk.labels,
+                    os.path.join(out_path, f"{name}.{self.chunk_idx:03}.y.pt")
+                )
+                self.chunk_idx += 1
+                if self.chunk_idx < self.n_chunks:
+                    chunk = ImageChunk((self.chunk_sizes[self.chunk_idx],) + shape)
+
+            if i % 25 == 0:
+                print(f"\r[INFO] {i / self.n * 100.:3.0f}% done --- {i:08} files processed.", end="")
 
         with open(os.path.join(out_path, f"{name}.info.dat"), 'wb') as f:
             pickle.dump(self.info, f)
 
         with open(os.path.join(out_path, f"{name}.lut.dat"), 'wb') as f:
             pickle.dump(self.labels_lookup, f)
+
+        print("\n[INFO] Done.")
 
 
 class CachedImageDataset(IterableDataset):
@@ -239,9 +262,13 @@ class CachedImageDataset(IterableDataset):
         self.cur_id = 0
         self.data_selector = 0
 
+        self.lut = {}
+
         with open(os.path.join(path, f"{name}.info.dat"), 'rb') as f:
             info = pickle.load(f)
 
+        with open(os.path.join(path, f"{name}.lut.dat"), 'rb') as f:
+            self.lut = pickle.load(f)
         self.chunk_sizes = info['sizes']
         self.n = info['n']
         self.n_files = len(self.chunk_sizes)
@@ -276,7 +303,6 @@ class CachedImageDataset(IterableDataset):
         y = torch.load(filename + '.y.pt')
         self.data[sel][0:self.chunk_sizes[chunk_id]] = x
         self.labels[sel][0:self.chunk_sizes[chunk_id]] = y
-        time.sleep(3)
 
     def __len__(self):
         return self.n
@@ -291,3 +317,7 @@ class CachedImageDataset(IterableDataset):
 
             self._flip_selector()
             proc.join()
+
+    def map_labels(self, x):
+        x = x.cpu().numpy()
+        return [self.lut[i] for i in x]

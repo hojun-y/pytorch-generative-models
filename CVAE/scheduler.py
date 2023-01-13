@@ -8,11 +8,13 @@ import numpy as np
 class CVAEScheduler(utils.Scheduler):
     def __init__(self, root_path, name, feeder, models, params, snapshot=utils.SaveMode.NO_VERSIONING):
         super().__init__(root_path, name, feeder, models, params, snapshot=snapshot)
-        self.test_z = torch.randn((params['classes'], params['z']), device='cuda')
-        self.test_y = F.one_hot(torch.LongTensor(np.arange(params['classes']))).to(torch.float32).cuda()
+        self.test_z = torch.randn((params['classes'] * params['eval_tile'], params['z']), device='cuda')
+        self.test_y = F.one_hot(torch.LongTensor(
+            np.tile(np.arange(params['classes']), (params['eval_tile'],))
+        )).to(torch.float32).cuda()
         self.normal = torch.randn((params['batch_size'], params['z']), device='cuda')
         self.loss = nn.BCELoss()
-        self.eval_size = [params['classes'], -1, params['res'], params['res']]
+        self.eval_size = [params['classes'] * params['eval_tile'], -1, params['res'], params['res']]
 
     def post_init(self):
         self.enc, self.dec = self.models

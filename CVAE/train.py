@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 from CVAE.scheduler import CVAEScheduler
 import CVAE.models as models
-from datasets.flowers import get_dataloader
+from datasets.celeba import get_dataloader
 
 import utils
 import initializers
@@ -12,14 +12,15 @@ import initializers
 
 params = {
     'batch_size': 32,
-    'z': 256,
+    'z': 32,
     'n': 64,
     'kernel_size': 3,
     'lr': 1e-4,
-    'steps': 1e5,
+    'steps': 2e5,
     'log_every': 25,
-    'eval_every': 1e3,
-    'save_every': 1e4,
+    'eval_every': 2000,
+    'eval_tile': 10,
+    'save_every': 5e4,
 }
 
 dataloader = get_dataloader(params, 64)

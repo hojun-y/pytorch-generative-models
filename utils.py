@@ -8,9 +8,14 @@ import datetime
 from enum import Enum
 import os
 from PIL import Image
-import time
+import argparse
 import pickle
 import random
+
+
+parser_ = argparse.ArgumentParser()
+parser_.add_argument('--train', action='store_true')
+parser_.add_argument('--eval', type=int, default=0)
 
 
 class SaveMode(Enum):
@@ -309,6 +314,12 @@ class CachedImageDataset(IterableDataset):
 
     def __iter__(self):
         self._load(True)
+
+        if self.n_files == 1:
+            while True:
+                for i in range(self.chunk_sizes[self.cur_id]):
+                    yield self.data[self.data_selector][i], self.labels[self.data_selector][i]
+
         for _ in self._next_file():
             proc = mp.Process(target=self._load, args=(False,))
             proc.start()
@@ -321,3 +332,12 @@ class CachedImageDataset(IterableDataset):
     def map_labels(self, x):
         x = x.cpu().numpy()
         return [self.lut[i] for i in x]
+
+
+def handle_cmd_params(params):
+    args = parser_.parse_args()
+    if args.train:
+        params['train'] = True
+    elif args.eval:
+        params['train'] = False
+        params['steps'] = args.eval

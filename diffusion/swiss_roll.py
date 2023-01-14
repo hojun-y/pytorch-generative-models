@@ -17,11 +17,12 @@ class SwissRollData:
         pos = torch.rand(batch_size, device=device, requires_grad=False) * self.twopi
         batch = torch.stack([torch.sin(pos), torch.cos(pos)]) * pos
         batch *= self.scale
-        return batch.view(-1, 2)
+        batch = torch.transpose(batch, 1, 0)
+        return batch
 
     def viz_data(self, x, show=True):
         with torch.no_grad():
-            x = x.view(2, -1).cpu().numpy()
+            x = x.cpu().numpy().T
             plt.plot(self.viz_x, self.viz_y, 'k')
             plt.xlim([-self.m - .1, self.m + .1])
             plt.ylim([-self.m - .1, self.m + .1])

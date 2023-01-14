@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
-from einops import rearrange, reduce, repeat
+from einops import rearrange, reduce, repeat, einsum
 from einops.layers.torch import Rearrange, Reduce
 
 
@@ -46,10 +46,15 @@ class DiffusionTools:
             (t.outer(self.freq_evens)).sin()
         )), 'x b y -> b (y x)')
 
+    @staticmethod
+    def mul_(x, s):
+        return einsum(x, s, 'b c h w, b -> b c h w')
+
     def sample_q(self, x, t):
         self.gaussian.normal_()
-        diffused = x * self.q_mean_lut.index_select(0, t).view(-1, 1, 1, 1) + \
-            self.gaussian * self.q_var_lut.index_select(0, t).view(-1, 1, 1, 1)
+        # diffused = self.mul_(x, self.q_mean_lut.index_select(0, t)) + \
+        #     self.mul_(self.gaussian, self.q_var_lut.index_select(0, t))
+        diffused = self.mul_(x, self.q_mean_lut.index_select(0, t))
         return diffused
 
     def sample_p(self, x, p, t_from, t_to=0):
@@ -60,8 +65,10 @@ class DiffusionTools:
                 noise.normal_()
                 embed = self.get_position_embedding(t.view(-1))
                 infer = p(x, torch.tile(embed, [x.shape[0], 1]))
-                mean = self.inv_sqrt_alpha_lut.index_select(0, t_idx) * \
-                    (x - infer * self.epsilon_scale_lut.index_select(0, t_idx).view(-1, 1, 1, 1))
+                mean = self.mul_(
+                    (x - self.mul_(infer, self.epsilon_scale_lut.index_select(0, t_idx))),
+                    self.inv_sqrt_alpha_lut.index_select(0, t_idx),
+                )
 
-                x = mean + self.sqrt_beta_lut.index_select(0, t_idx).view(-1, 1, 1, 1) * noise
+                x = mean + self.mul_(noise, self.sqrt_beta_lut.index_select(0, t_idx))
         return x

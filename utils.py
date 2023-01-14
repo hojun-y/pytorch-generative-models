@@ -4,6 +4,7 @@ from torch.utils.data import IterableDataset
 import torch.multiprocessing as mp
 import torch
 import matplotlib.pyplot as plt
+import matplotlib as m
 import datetime
 from enum import Enum
 import os
@@ -341,3 +342,19 @@ def handle_cmd_params(params):
     elif args.eval:
         params['train'] = False
         params['steps'] = args.eval
+
+
+def send_to_pyplot(x, imshow=True, normalized=True):
+    if normalized:
+        x = 0.5 * (x + 1)
+
+    dpi = m.rcParams['figure.dpi']
+    h, w, c = x.shape
+    h, w = float(h) / dpi, float(w) / dpi
+    fig = plt.figure(figsize=(w, h))
+    ax = plt.Axes(fig, [0, 0, 1, 1])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(x)
+    if imshow:
+        plt.show()

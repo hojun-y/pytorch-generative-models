@@ -52,9 +52,8 @@ class DiffusionTools:
 
     def sample_q(self, x, t):
         self.gaussian.normal_()
-        # diffused = self.mul_(x, self.q_mean_lut.index_select(0, t)) + \
-        #     self.mul_(self.gaussian, self.q_var_lut.index_select(0, t))
-        diffused = self.mul_(x, self.q_mean_lut.index_select(0, t))
+        diffused = self.mul_(x, self.q_mean_lut.index_select(0, t)) + \
+            self.mul_(self.gaussian, self.q_var_lut.index_select(0, t))
         return diffused
 
     def sample_p(self, x, p, t_from, t_to=0):

@@ -3,6 +3,7 @@ from torchvision.utils import make_grid
 from torch.utils.data import IterableDataset
 import torch.multiprocessing as mp
 import torch
+from collections.abc import Iterable
 import matplotlib.pyplot as plt
 import matplotlib as m
 import datetime
@@ -94,7 +95,9 @@ class Scheduler:
     def __init__(self, root_path, name, feeder, models, params, snapshot=SaveMode.NO_VERSIONING):
         self.data_feeder = feeder(params)
         self.recorder = Recorder(root_path, name)
-        self.models = [model_base(params).cuda() for model_base in models]
+        self.models = \
+            [model_base(params).cuda() for model_base in models] if isinstance(models, Iterable) \
+                else models(params).cuda()
         self.optims = None
         self.params = params
         self.version_ctrl_mode = snapshot
@@ -104,18 +107,27 @@ class Scheduler:
         pass
 
     def init(self, initializers):
-        for m, i in zip(self.models, initializers):
-            m.apply(i)
+        if isinstance(self.models, Iterable):
+            for m, i in zip(self.models, initializers):
+                m.apply(i)
+        else:
+            self.models.apply(initializers)
 
     def load_weights(self, model_id=None):
-        for m in self.models:
-            self.recorder.load_weights(m, m.__class__.__name__, model_id)
+        if isinstance(self.models, Iterable):
+            for m in self.models:
+                self.recorder.load_weights(m, m.__class__.__name__, model_id)
+        else:
+            self.recorder.load_weights(self.models, self.models.__class__.__name__, model_id)
 
     def train(self):
         self.recorder.init_tensorboard()
 
-        for m in self.models:
-            m.train()
+        if isinstance(self.models, Iterable):
+            for m in self.models:
+                m.train()
+        else:
+            self.models.train()
 
         for data in self.data_feeder.data_feeder(self.params['steps']):
             out = self.train_op(data)
@@ -130,8 +142,11 @@ class Scheduler:
                 for m in self.models:
                     self.recorder.save_weights(m.state_dict(), m.__class__.__name__, self.version_ctrl_mode)
 
-        for m in self.models:
-            self.recorder.save_weights(m.state_dict(), m.__class__.__name__, self.version_ctrl_mode)
+        if isinstance(self.models, Iterable):
+            for m in self.models:
+                self.recorder.save_weights(m.state_dict(), m.__class__.__name__, self.version_ctrl_mode)
+        else:
+            self.recorder.save_weights(self.models.state_dict(), self.models.__class__.__name__, self.version_ctrl_mode)
 
     def train_op(self, data):
         raise NotImplementedError

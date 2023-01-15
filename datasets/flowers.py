@@ -13,18 +13,19 @@ dataset_path = os.path.join(path, 'cache')
 class Data(utils.DataGenerator):
     def __init__(self, params):
         super().__init__(params)
+        data_name = f'flowers-{params["res"]}px' if params['channels'] == 3 else f'flowers-{params["res"]}px-grey'
         dataset = utils.CachedImageDataset(
             dataset_path,
-            f'flowers-{params["res"]}px'
+            data_name
         )
         self.loader = DataLoader(dataset, batch_size=params['batch_size'])
 
 
-def get_dataloader(params, res=64):
+def get_dataloader(params, res=64, color=True):
     params['classes'] = 16
     params['res'] = res
-    params['channels'] = 3
-    params['data_name'] = f"flower{res}"
+    params['channels'] = 3 if color else 1
+    params['data_name'] = f"flower{res}" if color else f"flower{res}-grey"
     return Data
 
 
@@ -58,6 +59,20 @@ if __name__ == '__main__':
         ]),
         (3, 32, 32),
         "flowers-32px",
+        dataset_path,
+        True
+    )
+
+    writer = utils.CachedImageDatasetWriter(source_path, CHUNK_SIZE * 4)
+    writer.save(
+        xforms.Compose([
+            xforms.ToTensor(),
+            xforms.Resize([32, 32]),
+            xforms.Lambda(lambda x: _grey2col(x)),
+            xforms.Grayscale(),
+        ]),
+        (1, 32, 32),
+        "flowers-32px-grey",
         dataset_path,
         True
     )
